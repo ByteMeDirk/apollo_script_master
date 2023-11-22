@@ -1,15 +1,16 @@
 import logging
-from urllib.parse import quote_plus
 import os
-from sqlalchemy import create_engine, URL, text
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import declarative_base, sessionmaker
-import os
+import re
+import time
 from datetime import datetime
 
-from sqlalchemy import Integer, Column, String, DateTime, Boolean, __version__
+from sqlalchemy import Integer, Column, String, DateTime, Boolean, text
+from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from apollo_script_master.config import validate_config_file
+from .file_management import collect_files, hash_file_collection, minify_sql
 
 BASE = declarative_base()
 ASP_CONFIG = os.getenv("ASP_CONFIG", {})
@@ -81,10 +82,152 @@ class ASMImpl:
             logging.error(f"An error occurred when trying to populate the lock table: {error}.")
             raise error
 
+    def _generate_filesets(self) -> dict:
+        """
+        Generate the filesets for the directory.
+
+        Returns:
+            The filesets as a dictionary.
+        """
+        is_recursive = self.config_file.get("checksum", {}).get("recursive", False)
+        algorithm = self.config_file.get("checksum", {}).get("algorithm", "md5")
+        filesets = {}
+        for filepath, filedata in collect_files(filepath=self.directory, recursive=is_recursive):
+            for checksum in hash_file_collection(contents=filedata, algorithm=algorithm):
+                filesets[filepath] = {
+                    "data": minify_sql(filedata),
+                    "checksum": checksum,
+                    "algorithm": algorithm,
+                }
+        return filesets
+
+    def _close_lock(self) -> None:
+        """
+        First check if the lock is open in ASMDeployLock, if not wait until it is.
+        Then set the lock to True so that no other process can run.
+        Checks:
+            deploy_lock_table:
+              lock_check_retries
+              lock_check_wait
+        To determine the wait period and the number of retries.
+        """
+        logging.info("Closing lock.")
+        lock_check_retries = self.config_file.get("deploy_lock_table", {}).get("lock_check_retries", 10)
+        lock_check_wait = self.config_file.get("deploy_lock_table", {}).get("lock_check_wait", 30)
+        record = self.session.query(ASMDeployLock).first()
+        for _ in range(lock_check_retries):
+            self.session.refresh(record)
+            if record.locked is False:
+                record.locked = True
+                record.lockedby = self.author
+                self.session.add(record)
+                self.session.commit()
+                break
+            else:
+                logging.info(
+                    f"Lock is already closed, waiting {lock_check_wait} seconds. {_ + 1}/{lock_check_retries}.")
+                time.sleep(lock_check_wait)
+        else:
+            logging.error("Lock is still closed, cannot continue.")
+            raise Exception("Lock is still closed, cannot continue.")
+
+    def _open_lock(self) -> None:
+        """
+        Open the lock in ASMDeployLock.
+        """
+        logging.info("Opening lock.")
+        record = self.session.query(ASMDeployLock).first()
+        record.locked = False
+        record.lockedby = None
+        self.session.add(record)
+        self.session.commit()
+
+    def _populate_filesets(self, filesets: dict) -> None:
+        """
+        Populate the filesets into the database.
+
+        Args:
+            filesets: The filesets to populate.
+
+        Returns:
+            None
+        """
+        dry_run = self.config_file.get("global", {}).get("dry_run", False)
+        for filepath in filesets:
+            record = self.session.query(ASMDeploy).filter(ASMDeploy.filepath == filepath).first()
+            if record is None:
+                logging.info(f"File {filepath} is not in the table, adding.")
+                if not dry_run:
+                    record = ASMDeploy(
+                        filepath=filepath,
+                        data=filesets[filepath].get("data"),
+                        checksum=filesets[filepath].get("checksum"),
+                        algorithm=filesets[filepath].get("algorithm"),
+                        author=self.author,
+                    )
+                    self.session.add(record)
+                    self.session.execute(text(record.data))
+            else:
+                logging.info(f"File {filepath} is in the table, checking for changes.")
+                if record.checksum != filesets[filepath].get("checksum"):
+                    logging.info(f"File {filepath} has changed, updating.")
+                    if not dry_run:
+                        record.data = filesets[filepath].get("data")
+                        record.checksum = filesets[filepath].get("checksum")
+                        record.algorithm = filesets[filepath].get("algorithm")
+                        record.author = self.author
+                        self.session.add(record)
+                        self.session.execute(text(record.data))
+                else:
+                    logging.info(f"File {filepath} has not changed, skipping.")
+
+    def _delete(self, filesets: dict):
+        """
+        Checks the paths in the table against the paths in the directory.
+        If the path is not in the directory, add it to the deletions table, and remove it from the deploy table.
+        Return a list of the sql data that was deleted.
+        """
+        records = self.session.query(ASMDeploy).all()
+        sql_data = []
+        for record in records:
+            if record.filepath not in filesets:
+                # add to sql data
+                logging.info(f"File {record.filepath} is not in the directory, deleting.")
+                sql_data.append(record)
+                self.session.delete(record)
+
+                # add to deletions table
+                deletion = ASMDeployDeletions(
+                    deploy_id=record.id,
+                    filepath=record.filepath,
+                    data=record.data,
+                    author=self.author,
+                )
+                self.session.add(deletion)
+
+        return sql_data
+
+    def _execute_deletions(self, deletions: list) -> None:
+        """
+        Use regex to find the Table, FUnction, Procedure or View and execute the DROP statement.
+        """
+        pattern = re.compile(r"(CREATE\s+OR\s+REPLACE|CREATE\s+OR\s+ALTER|CREATE|ALTER|REPLACE)\s+(FUNCTION|TABLE|VIEW|PROCEDURE)\s+([\w\.]+)\s*\(")
+        for deletion in deletions:
+            for match in re.finditer(pattern, deletion.data):
+                object_type = match.group(2)
+                object_name = match.group(3)
+                logging.info(f"Found {object_type} {object_name}, dropping.")
+                self.session.execute(text(f"DROP {object_type} {object_name}"))
+
     def run(self) -> None:
         logging.info("Running ASM session.")
         try:
             self._populate_lock_table()
+            self._close_lock()
+            filesets = self._generate_filesets()
+            self._populate_filesets(filesets=filesets)
+            deletions = self._delete(filesets=filesets)
+            self._execute_deletions(deletions=deletions)
             self.session.commit()
         except SQLAlchemyError as error:
             logging.error(f"An error occurred within the session: {error}.")
@@ -92,6 +235,7 @@ class ASMImpl:
             raise error from error
         finally:
             logging.info("Closing ASM session.")
+            self._open_lock()
             self.session.close()
 
 
@@ -106,11 +250,11 @@ class ASMDeploy(BASE):
     id = Column(Integer, primary_key=True)
     filepath = Column(String)
     data = Column(String)
-    md5 = Column(String)
+    checksum = Column(String)
+    algorithm = Column(String)
 
     author = Column(String)
     date = Column(DateTime, default=datetime.now())
-    version = Column(String, default=__version__)
 
 
 class ASMDeployLock(BASE):
@@ -126,8 +270,6 @@ class ASMDeployLock(BASE):
     date = Column(DateTime, default=datetime.now())
     lockedby = Column(String)
 
-    version = Column(String, default=__version__)
-
 
 class ASMDeployDeletions(BASE):
     """
@@ -138,9 +280,9 @@ class ASMDeployDeletions(BASE):
     __table_args__ = ASP_CONFIG.get("deploy_deletions_table", {}).get("args", {})
 
     id = Column(Integer, primary_key=True)
+    deploy_id = Column(Integer)
     filepath = Column(String)
     data = Column(String)
 
     author = Column(String)
     date = Column(DateTime, default=datetime.now())
-    version = Column(String, default=__version__)

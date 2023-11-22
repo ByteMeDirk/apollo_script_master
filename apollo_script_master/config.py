@@ -59,7 +59,8 @@ config_file_schema = schema.Schema(
         "checksum": {
             "algorithm": str,
             "output_enabled": bool,
-            "output_file": str
+            "output_file": str,
+            "recursive_search": bool,
         },
         "deploy_table": {
             "name": str,
@@ -114,9 +115,10 @@ def generate_config_file(config_file: str) -> None:
             "echo": False
         },
         "checksum": {
-            "algorithm": "sha256",
+            "algorithm": "md5",
             "output_enabled": True,
-            "output_file": "checksums.txt"
+            "output_file": "checksums.txt",
+            "recursive_search": True,
         },
         "deploy_table": {
             "name": "ASMDeploy",
