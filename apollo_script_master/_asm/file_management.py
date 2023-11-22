@@ -27,7 +27,7 @@ def minify_sql(sql: str) -> str:
         statement = re.sub(r"\/\*.*?\*\/", " ", str(statement))  # Remove multi-line comments.
         statements.append(statement)
 
-    return "".join(statements)
+    return "".join(statements).strip()
 
 
 def collect_files(filepath: str, recursive: bool = False) -> tuple:

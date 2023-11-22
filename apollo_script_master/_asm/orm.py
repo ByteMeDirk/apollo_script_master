@@ -166,7 +166,11 @@ class ASMImpl:
                         author=self.author,
                     )
                     self.session.add(record)
-                    self.session.execute(text(record.data))
+                    try:
+                        self.session.execute(text(record.data))
+                    except SQLAlchemyError as error:
+                        logging.error(f"An error occurred when trying to execute the script: {error}.")
+                        raise error from error
             else:
                 logging.info(f"File {filepath} is in the table, checking for changes.")
                 if record.checksum != filesets[filepath].get("checksum"):
@@ -177,7 +181,11 @@ class ASMImpl:
                         record.algorithm = filesets[filepath].get("algorithm")
                         record.author = self.author
                         self.session.add(record)
-                        self.session.execute(text(record.data))
+                        try:
+                            self.session.execute(text(record.data))
+                        except SQLAlchemyError as error:
+                            logging.error(f"An error occurred when trying to execute the script: {error}.")
+                            raise error from error
                 else:
                     logging.info(f"File {filepath} has not changed, skipping.")
 
@@ -217,7 +225,7 @@ class ASMImpl:
                 object_type = match.group(2)
                 object_name = match.group(3)
                 logging.info(f"Found {object_type} {object_name}, dropping.")
-                self.session.execute(text(f"DROP {object_type} {object_name}"))
+                self.session.execute(text(f"DROP {object_type} {object_name} CASCADE;"))
 
     def run(self) -> None:
         logging.info("Running ASM session.")
