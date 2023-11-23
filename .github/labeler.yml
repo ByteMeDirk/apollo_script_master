@@ -1,0 +1,20 @@
+repo:
+  - '*'
+
+source:
+  - any: [ 'apollo_script_master/**' ]
+
+test:
+  - any: [ 'tests/**' ]
+
+cicd:
+  - any: [ '.github/**' ]
+
+deploy:
+  - requirements.txt
+  - setup.py
+
+documentation:
+  - README.md
+  - any: [ 'docs/**' ]
+
