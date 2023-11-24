@@ -1,3 +1,6 @@
+"""
+The ORM module for ASM.
+"""
 import logging
 import os
 import re
@@ -10,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from apollo_script_master.config import validate_config_file
-from .file_management import collect_files, hash_file_collection, minify_sql
+from .files import collect_files, hash_file_collection, minify_sql
 
 BASE = declarative_base()
 ASP_CONFIG = os.getenv("ASP_CONFIG", {})
@@ -29,16 +32,24 @@ def url_manager(**kwargs) -> str:
     """
     try:
         if kwargs.get("drivername") == "postgresql":
-            return f"{kwargs.get('drivername')}+{kwargs.get('dialect', 'psycopg2')}://{kwargs.get('username')}:{kwargs.get('password')}@{kwargs.get('host')}:{kwargs.get('port', 5432)}/{kwargs.get('database', 'postgres')}"
+            return f"{kwargs.get('drivername')}+{kwargs.get('dialect', 'psycopg2')}:" \
+                   f"//{kwargs.get('username')}:{kwargs.get('password')}@{kwargs.get('host')}:" \
+                   f"{kwargs.get('port', 5432)}/{kwargs.get('database', 'postgres')}"
 
         raise KeyError(
-            f"The provided drivername/dialect is not supported: {kwargs.get('drivername')}/{kwargs.get('dialect')}.")
+            f"The provided drivername/dialect is not supported: "
+            f"{kwargs.get('drivername')}/{kwargs.get('dialect')}."
+        )
     except KeyError as error:
         logging.error(f"An error occurred when trying to generate the URL: {error}.")
         raise error
 
 
 class ASMImpl:
+    """
+    ASMImpl is a class to manage the ORM session.
+    """
+
     def __init__(
             self,
             conn_params: dict,
@@ -46,6 +57,13 @@ class ASMImpl:
             author: str,
             config_file: str = "asm.yml",
     ):
+        """
+        Args:
+            conn_params (dict): The connection parameters to use.
+            directory (str): The directory to use.
+            author (str): The author to use.
+            config_file (str): The config file to use.
+        """
         self.__conn_params = conn_params
         self.directory = directory
         self.author = author
@@ -67,6 +85,12 @@ class ASMImpl:
         BASE.metadata.create_all(engine)
         session = sessionmaker(bind=engine)
         return session()
+
+    def get_session(self):
+        """
+        Get the session for the ASM object.
+        """
+        return self.session
 
     def _populate_lock_table(self) -> None:
         logging.info("Populating lock table.")
@@ -101,7 +125,7 @@ class ASMImpl:
                 }
         return filesets
 
-    def _close_lock(self) -> None:
+    def close_lock(self) -> None:
         """
         First check if the lock is open in ASMDeployLock, if not wait until it is.
         Then set the lock to True so that no other process can run.
@@ -131,7 +155,7 @@ class ASMImpl:
             logging.error("Lock is still closed, cannot continue.")
             raise Exception("Lock is still closed, cannot continue.")
 
-    def _open_lock(self) -> None:
+    def open_lock(self) -> None:
         """
         Open the lock in ASMDeployLock.
         """
@@ -219,7 +243,8 @@ class ASMImpl:
         """
         Use regex to find the Table, FUnction, Procedure or View and execute the DROP statement.
         """
-        pattern = re.compile(r"(CREATE\s+OR\s+REPLACE|CREATE\s+OR\s+ALTER|CREATE|ALTER|REPLACE)\s+(FUNCTION|TABLE|VIEW|PROCEDURE)\s+([\w\.]+)\s*\(")
+        pattern = re.compile(
+            r"(CREATE\s+OR\s+REPLACE|CREATE\s+OR\s+ALTER|CREATE|ALTER|REPLACE)\s+(FUNCTION|TABLE|VIEW|PROCEDURE)\s+([\w\.]+)\s*\(")
         for deletion in deletions:
             for match in re.finditer(pattern, deletion.data):
                 object_type = match.group(2)
@@ -231,7 +256,7 @@ class ASMImpl:
         logging.info("Running ASM session.")
         try:
             self._populate_lock_table()
-            self._close_lock()
+            self.close_lock()
             filesets = self._generate_filesets()
             self._populate_filesets(filesets=filesets)
             deletions = self._delete(filesets=filesets)
@@ -243,7 +268,7 @@ class ASMImpl:
             raise error from error
         finally:
             logging.info("Closing ASM session.")
-            self._open_lock()
+            self.open_lock()
             self.session.close()
 
 
@@ -264,6 +289,9 @@ class ASMDeploy(BASE):
     author = Column(String)
     date = Column(DateTime, default=datetime.now())
 
+    def __repr__(self):
+        return f"<ASMDeploy(filepath={self.filepath}, checksum={self.checksum}, algorithm={self.algorithm}, author={self.author}, date={self.date})>"
+
 
 class ASMDeployLock(BASE):
     """
@@ -277,6 +305,9 @@ class ASMDeployLock(BASE):
     locked = Column(Boolean)
     date = Column(DateTime, default=datetime.now())
     lockedby = Column(String)
+
+    def __repr__(self):
+        return f"<ASMDeployLock(locked={self.locked}, date={self.date}, lockedby={self.lockedby})>"
 
 
 class ASMDeployDeletions(BASE):
@@ -294,3 +325,6 @@ class ASMDeployDeletions(BASE):
 
     author = Column(String)
     date = Column(DateTime, default=datetime.now())
+
+    def __repr__(self):
+        return f"<ASMDeployDeletions(deploy_id={self.deploy_id}, filepath={self.filepath}, data={self.data}, author={self.author}, date={self.date})>"

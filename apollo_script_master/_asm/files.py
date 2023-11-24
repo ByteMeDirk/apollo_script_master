@@ -1,8 +1,12 @@
+"""
+File management module.
+"""
+
 import logging
 from glob import glob
 from hashlib import md5, sha256, sha512
-import re
-import sqlparse
+
+from .sql import SQL
 
 
 def minify_sql(sql: str) -> str:
@@ -15,19 +19,9 @@ def minify_sql(sql: str) -> str:
     Returns:
         The minified SQL statement.
     """
-    logging.info(f"Minifying SQL statement.")
-    parsed = sqlparse.parse(sql, encoding="utf8")
-
-    # Remove comments, newlines, and whitespace from the SQL statement using regex.
-    statements = []
-    for statement in parsed:
-        statement = re.sub(r"--.*?\n", " ", str(statement))  # Remove single line comments.
-        statement = re.sub(r"\n", " ", str(statement))  # Remove newlines.
-        statement = re.sub(r"\s+", " ", str(statement))  # Remove whitespace.
-        statement = re.sub(r"\/\*.*?\*\/", " ", str(statement))  # Remove multi-line comments.
-        statements.append(statement)
-
-    return "".join(statements).strip()
+    logging.info("Minifying SQL statement.")
+    sql_manager = SQL(sql)
+    return sql_manager.minify()
 
 
 def collect_files(filepath: str, recursive: bool = False) -> tuple:

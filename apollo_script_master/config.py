@@ -46,8 +46,8 @@ import logging
 import os
 
 import schema
-from schema import Optional
 import yaml
+from schema import Optional
 
 config_file_schema = schema.Schema(
     {
@@ -89,7 +89,7 @@ def validate_config_file(config_file: str) -> dict:
     Validate the configuration file.
     """
     try:
-        with open(config_file, "r") as _rconfig_file:
+        with open(config_file, "r", encoding="utf8") as _rconfig_file:
             config = yaml.safe_load(_rconfig_file)
         config_file_schema.validate(config)
         os.environ["ASP_CONFIG"] = str(config)
@@ -145,6 +145,6 @@ def generate_config_file(config_file: str) -> None:
             "log_file": "sql_deploy.log"
         }
     }
-    with open(config_file, "w") as _wconfig_file:
+    with open(config_file, "w", encoding="utf8") as _wconfig_file:
         yaml.dump(config, _wconfig_file, default_flow_style=False)
-    logging.info(f"Configuration file generated at {config_file}.")
+    logging.info(f"Configuration file generated at %s.".format(config_file))

@@ -10,8 +10,8 @@ global:
 checksum:
   recursive_search: True  # Set to True to recursively search for SQL files in the script directory
   algorithm: sha256  # Set to sha256 or md5
-  output_enabled: True  # Set to True to enable checksum verification during script execution
-  output_file: checksums.txt  # Checksum output file name
+  output_enabled: True  # Set to True to output checksums to a file
+  output_file: checksums.txt  # Checksum output file location, name, and format
 
 # Deploy Table Settings
 deploy_table:

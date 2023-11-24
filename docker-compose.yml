@@ -7,24 +7,24 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: YourPassword123!
-      POSTGRES_DB: testdb
+      POSTGRES_DB: test
     ports:
       - "5432:5432"
     networks:
       - test_network
-#
-#  mysql:
-#    image: mysql
-#    container_name: mysql_test
-#    environment:
-#      MYSQL_ROOT_PASSWORD: YourPassword123!
-#      MYSQL_DATABASE: testdb
-#      MYSQL_USER: user
-#      MYSQL_PASSWORD: YourPassword123!
-#    ports:
-#      - "3306:3306"
-#    networks:
-#      - test_network
+
+  mysql:
+    image: mysql
+    container_name: mysql_test
+    environment:
+      MYSQL_ROOT_PASSWORD: YourPassword123!
+      MYSQL_DATABASE: test
+      MYSQL_USER: user
+      MYSQL_PASSWORD: YourPassword123!
+    ports:
+      - "3306:3306"
+    networks:
+      - test_network
 
 networks:
   test_network:
